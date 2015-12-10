@@ -553,11 +553,11 @@ public:
     assert(IGM.DebugInfo && "debug info not enabled");
     if (ArgNo) {
       PrologueLocation AutoRestore(IGM.DebugInfo, Builder);
-      IGM.DebugInfo->emitArgVariableDeclaration(Builder, Storage, Ty, DS, Name,
-                                                ArgNo, Indirection);
+      IGM.DebugInfo->emitVariableDeclaration(Builder, Storage, Ty, DS, Name,
+                                             ArgNo, Indirection);
     } else
-      IGM.DebugInfo->emitStackVariableDeclaration(Builder, Storage, Ty, DS,
-                                                  Name, Indirection);
+      IGM.DebugInfo->emitVariableDeclaration(Builder, Storage, Ty, DS, Name, 0,
+                                             Indirection);
   }
 
   void emitFailBB() {
@@ -575,8 +575,6 @@ public:
   //===--------------------------------------------------------------------===//
 
   void visitSILBasicBlock(SILBasicBlock *BB);
-  IndirectionKind getLoweredArgValue(llvm::SmallVectorImpl<llvm::Value *> &Vals,
-                                     SILArgument *Arg, StringRef Name);
 
   void emitFunctionArgDebugInfo(SILBasicBlock *BB);
 
@@ -669,10 +667,11 @@ public:
   void visitStrongUnpinInst(StrongUnpinInst *i);
   void visitStrongRetainInst(StrongRetainInst *i);
   void visitStrongReleaseInst(StrongReleaseInst *i);
-  void visitStrongRetainAutoreleasedInst(StrongRetainAutoreleasedInst *i);
   void visitStrongRetainUnownedInst(StrongRetainUnownedInst *i);
   void visitUnownedRetainInst(UnownedRetainInst *i);
   void visitUnownedReleaseInst(UnownedReleaseInst *i);
+  void visitLoadUnownedInst(LoadUnownedInst *i);
+  void visitStoreUnownedInst(StoreUnownedInst *i);
   void visitIsUniqueInst(IsUniqueInst *i);
   void visitIsUniqueOrPinnedInst(IsUniqueOrPinnedInst *i);
   void visitDeallocStackInst(DeallocStackInst *i);
@@ -723,7 +722,6 @@ public:
   void visitBranchInst(BranchInst *i);
   void visitCondBranchInst(CondBranchInst *i);
   void visitReturnInst(ReturnInst *i);
-  void visitAutoreleaseReturnInst(AutoreleaseReturnInst *i);
   void visitThrowInst(ThrowInst *i);
   void visitSwitchValueInst(SwitchValueInst *i);
   void visitSwitchEnumInst(SwitchEnumInst *i);
@@ -830,9 +828,7 @@ emitPHINodesForBBArgs(IRGenSILFunction &IGF,
     if (!silBB->empty()) {
       SILInstruction &I = *silBB->begin();
       auto DS = I.getDebugScope();
-      // FIXME: This should be an assertion.
-      if (!DS || (DS->SILFn != IGF.CurSILFn && !DS->InlinedCallSite))
-        DS = IGF.CurSILFn->getDebugScope();
+      assert(DS && (DS->SILFn == IGF.CurSILFn || DS->InlinedCallSite));
       IGF.IGM.DebugInfo->setCurrentLoc(IGF.Builder, DS, I.getLoc());
     }
   }
@@ -1390,24 +1386,6 @@ static unsigned countArgs(DeclContext *DC) {
   return N;
 }
 
-/// Store the lowered IR representation of Arg in the array
-/// Vals. Returns true if Arg is a byref argument.
-IndirectionKind IRGenSILFunction::
-getLoweredArgValue(llvm::SmallVectorImpl<llvm::Value *> &Vals,
-                   SILArgument *Arg, StringRef Name) {
-  const LoweredValue &LoweredArg = getLoweredValue(Arg);
-  if (LoweredArg.isAddress()) {
-    Vals.push_back(LoweredArg.getAddress().getAddress());
-    return IndirectValue;
-  } else if (LoweredArg.kind == LoweredValue::Kind::Explosion) {
-    Explosion e = LoweredArg.getExplosion(*this);
-    for (auto val : e.claimAll())
-      Vals.push_back(val);
-  } else
-    llvm_unreachable("unhandled argument kind");
-  return DirectValue;
-}
-
 void IRGenSILFunction::emitFunctionArgDebugInfo(SILBasicBlock *BB) {
   // Emit the artificial error result argument.
   auto FnTy = CurSILFn->getLoweredFunctionType();
@@ -1424,10 +1402,9 @@ void IRGenSILFunction::emitFunctionArgDebugInfo(SILBasicBlock *BB) {
     // other argument. It is only used for sorting.
     unsigned ArgNo =
         countArgs(CurSILFn->getDeclContext()) + 1 + BB->getBBArgs().size();
-    IGM.DebugInfo->emitArgVariableDeclaration(
+    IGM.DebugInfo->emitVariableDeclaration(
         Builder, emitShadowCopy(ErrorResultSlot.getAddress(), Name), DTI,
-        getDebugScope(), Name, ArgNo,
-        IndirectValue, ArtificialValue);
+        getDebugScope(), Name, ArgNo, IndirectValue, ArtificialValue);
   }
 }
 
@@ -2178,16 +2155,17 @@ static void emitReturnInst(IRGenSILFunction &IGF,
 
 void IRGenSILFunction::visitReturnInst(swift::ReturnInst *i) {
   Explosion result = getLoweredExplosion(i->getOperand());
-  emitReturnInst(*this, i->getOperand().getType(), result);
-}
 
-void IRGenSILFunction::visitAutoreleaseReturnInst(AutoreleaseReturnInst *i) {
-  Explosion result = getLoweredExplosion(i->getOperand());
-  assert(result.size() == 1 &&
-         "should have one objc pointer value for autorelease_return");
-  Explosion temp;
-  temp.add(emitObjCAutoreleaseReturnValue(*this, result.claimNext()));
-  emitReturnInst(*this, i->getOperand().getType(), temp);
+  // Implicitly autorelease the return value if the function's result
+  // convention is autoreleased.
+  if (CurSILFn->getLoweredFunctionType()->getResult().getConvention() ==
+        ResultConvention::Autoreleased) {
+    Explosion temp;
+    temp.add(emitObjCAutoreleaseReturnValue(*this, result.claimNext()));
+    result = std::move(temp);
+  }
+
+  emitReturnInst(*this, i->getOperand().getType(), result);
 }
 
 void IRGenSILFunction::visitThrowInst(swift::ThrowInst *i) {
@@ -2969,27 +2947,15 @@ void IRGenSILFunction::visitDebugValueInst(DebugValueInst *i) {
   StringRef Name = Decl->getNameStr();
   Explosion e = getLoweredExplosion(SILVal);
   DebugTypeInfo DbgTy(Decl, Decl->getType(), getTypeInfo(SILVal.getType()));
-  if (DbgTy.getType()->getKind() == TypeKind::InOut)
-    // An inout type that is described by a debug *value* is a
-    // promoted capture. Unwrap the type.
-    DbgTy.unwrapInOutType();
+  // An inout/lvalue type that is described by a debug value has been
+  // promoted by an optimization pass. Unwrap the type.
+  DbgTy.unwrapLValueOrInOutType();
 
   // Put the value into a stack slot at -Onone.
   llvm::SmallVector<llvm::Value *, 8> Copy;
   emitShadowCopy(e.claimAll(), Name, Copy);
   emitDebugVariableDeclaration(Copy, DbgTy, i->getDebugScope(), Name,
                                i->getVarInfo().getArgNo());
-}
-
-/// InOut- and Archetypes are already implicitly indirect.
-static IndirectionKind getIndirectionForDebugValueAddr(swift::TypeBase *Ty) {
-  switch (Ty->getKind()) {
-  case TypeKind::InOut:
-  case TypeKind::Archetype:
-    return DirectValue;
-  default:
-    return IndirectValue;
-  }
 }
 
 void IRGenSILFunction::visitDebugValueAddrInst(DebugValueAddrInst *i) {
@@ -3007,10 +2973,9 @@ void IRGenSILFunction::visitDebugValueAddrInst(DebugValueAddrInst *i) {
   auto Addr = getLoweredAddress(SILVal).getAddress();
   DebugTypeInfo DbgTy(Decl, Decl->getType(), getTypeInfo(SILVal.getType()));
   // Put the value into a stack slot at -Onone and emit a debug intrinsic.
-  emitDebugVariableDeclaration(
-      emitShadowCopy(Addr, Name), DbgTy, i->getDebugScope(), Name,
-      i->getVarInfo().getArgNo(),
-      getIndirectionForDebugValueAddr(DbgTy.getType()));
+  emitDebugVariableDeclaration(emitShadowCopy(Addr, Name), DbgTy,
+                               i->getDebugScope(), Name,
+                               i->getVarInfo().getArgNo(), IndirectValue);
 }
 
 void IRGenSILFunction::visitLoadWeakInst(swift::LoadWeakInst *i) {
@@ -3077,7 +3042,7 @@ void IRGenSILFunction::visitCopyBlockInst(CopyBlockInst *i) {
 void IRGenSILFunction::visitStrongPinInst(swift::StrongPinInst *i) {
   Explosion lowered = getLoweredExplosion(i->getOperand());
   llvm::Value *object = lowered.claimNext();
-  llvm::Value *pinHandle = emitTryPin(object);
+  llvm::Value *pinHandle = emitNativeTryPin(object);
 
   Explosion result;
   result.add(pinHandle);
@@ -3087,49 +3052,25 @@ void IRGenSILFunction::visitStrongPinInst(swift::StrongPinInst *i) {
 void IRGenSILFunction::visitStrongUnpinInst(swift::StrongUnpinInst *i) {
   Explosion lowered = getLoweredExplosion(i->getOperand());
   llvm::Value *pinHandle = lowered.claimNext();
-  emitUnpin(pinHandle);
+  emitNativeUnpin(pinHandle);
 }
 
 void IRGenSILFunction::visitStrongRetainInst(swift::StrongRetainInst *i) {
   Explosion lowered = getLoweredExplosion(i->getOperand());
   auto &ti = cast<ReferenceTypeInfo>(getTypeInfo(i->getOperand().getType()));
-  ti.retain(*this, lowered);
+  ti.strongRetain(*this, lowered);
 }
 
 void IRGenSILFunction::visitStrongReleaseInst(swift::StrongReleaseInst *i) {
   Explosion lowered = getLoweredExplosion(i->getOperand());
   auto &ti = cast<ReferenceTypeInfo>(getTypeInfo(i->getOperand().getType()));
-  ti.release(*this, lowered);
-}
-
-void IRGenSILFunction::
-visitStrongRetainAutoreleasedInst(swift::StrongRetainAutoreleasedInst *i) {
-  Explosion lowered = getLoweredExplosion(i->getOperand());
-  llvm::Value *value = lowered.claimNext();
-  value = emitObjCRetainAutoreleasedReturnValue(*this, value);
-
-  // Overwrite the stored explosion value with the result of
-  // objc_retainAutoreleasedReturnValue.  This is actually
-  // semantically important: if the call result is live across this
-  // call, the backend will have to emit instructions that interfere
-  // with the reclaim optimization.
-  //
-  // This is only sound if the retainAutoreleasedReturnValue
-  // immediately follows the call, but that should be reliably true.
-  //
-  // ...the reclaim here should really be implicit in the SIL calling
-  // convention.
-
-  Explosion out;
-  out.add(value);
-  overwriteLoweredExplosion(i->getOperand(), out);
+  ti.strongRelease(*this, lowered);
 }
 
 /// Given a SILType which is a ReferenceStorageType, return the type
 /// info for the underlying reference type.
 static const ReferenceTypeInfo &getReferentTypeInfo(IRGenFunction &IGF,
                                                     SILType silType) {
-  assert(silType.isObject());
   auto type = silType.castTo<ReferenceStorageType>().getReferentType();
   return cast<ReferenceTypeInfo>(IGF.getTypeInfoForLowered(type));
 }
@@ -3138,7 +3079,7 @@ void IRGenSILFunction::
 visitStrongRetainUnownedInst(swift::StrongRetainUnownedInst *i) {
   Explosion lowered = getLoweredExplosion(i->getOperand());
   auto &ti = getReferentTypeInfo(*this, i->getOperand().getType());
-  ti.retainUnowned(*this, lowered);
+  ti.strongRetainUnowned(*this, lowered);
 }
 
 void IRGenSILFunction::visitUnownedRetainInst(swift::UnownedRetainInst *i) {
@@ -3147,11 +3088,36 @@ void IRGenSILFunction::visitUnownedRetainInst(swift::UnownedRetainInst *i) {
   ti.unownedRetain(*this, lowered);
 }
 
-
 void IRGenSILFunction::visitUnownedReleaseInst(swift::UnownedReleaseInst *i) {
   Explosion lowered = getLoweredExplosion(i->getOperand());
   auto &ti = getReferentTypeInfo(*this, i->getOperand().getType());
   ti.unownedRelease(*this, lowered);
+}
+
+void IRGenSILFunction::visitLoadUnownedInst(swift::LoadUnownedInst *i) {
+  Address source = getLoweredAddress(i->getOperand());
+  auto &ti = getReferentTypeInfo(*this, i->getOperand().getType());
+
+  Explosion result;
+  if (i->isTake()) {
+    ti.unownedTakeStrong(*this, source, result);
+  } else {
+    ti.unownedLoadStrong(*this, source, result);
+  }
+
+  setLoweredExplosion(SILValue(i, 0), result);
+}
+
+void IRGenSILFunction::visitStoreUnownedInst(swift::StoreUnownedInst *i) {
+  Explosion source = getLoweredExplosion(i->getSrc());
+  Address dest = getLoweredAddress(i->getDest());
+
+  auto &ti = getReferentTypeInfo(*this, i->getDest().getType());
+  if (i->isInitializationOfDest()) {
+    ti.unownedInit(*this, source, dest);
+  } else {
+    ti.unownedAssign(*this, source, dest);
+  }
 }
 
 static void requireRefCountedType(IRGenSILFunction &IGF,
@@ -3259,12 +3225,11 @@ static void emitDebugDeclarationForAllocStack(IRGenSILFunction &IGF,
   if (IGF.IGM.DebugInfo && Decl) {
     auto *Pattern = Decl->getParentPattern();
     if (!Pattern || !Pattern->isImplicit()) {
+      auto DbgTy = DebugTypeInfo(Decl, type);
       // Discard any inout or lvalue qualifiers. Since the object itself
       // is stored in the alloca, emitting it as a reference type would
       // be wrong.
-      auto DbgTy = DebugTypeInfo(Decl,
-                                 Decl->getType()->getLValueOrInOutObjectType(),
-                                 type);
+      DbgTy.unwrapLValueOrInOutType();
       auto Name = Decl->getName().empty() ? "_" : Decl->getName().str();
       auto DS = i->getDebugScope();
       if (DS) {
@@ -3425,17 +3390,11 @@ void IRGenSILFunction::visitAllocBoxInst(swift::AllocBoxInst *i) {
     // arguments.
     if (Name == IGM.Context.Id_self.str())
       return;
-    auto Indirection = IndirectValue;
-    // LValues and inout args are implicitly indirect because of their type.
-    if (Decl->getType()->getKind() == TypeKind::LValue ||
-        Decl->getType()->getKind() == TypeKind::InOut)
-      Indirection = DirectValue;
 
-    IGM.DebugInfo->emitStackVariableDeclaration
-      (Builder,
-       emitShadowCopy(addr.getAddress(), Name),
-       DebugTypeInfo(Decl, i->getElementType().getSwiftType(), type),
-       i->getDebugScope(), Name, Indirection);
+    IGM.DebugInfo->emitVariableDeclaration(
+        Builder, emitShadowCopy(addr.getAddress(), Name),
+        DebugTypeInfo(Decl, i->getElementType().getSwiftType(), type),
+        i->getDebugScope(), Name, 0, IndirectValue);
   }
 }
 
@@ -3683,19 +3642,24 @@ static void trivialRefConversion(IRGenSILFunction &IGF,
     IGF.setLoweredExplosion(result, temp);
     return;
   }
-  
-  // Otherwise, do the conversion.
-  llvm::Value *value = temp.claimNext();
+
   auto schema = resultTI.getSchema();
-  assert(schema.size() == 1 && "not a single scalar type");
-  auto resultTy = schema.begin()->getScalarType();
-  if (resultTy->isPointerTy())
-    value = IGF.Builder.CreateIntToPtr(value, resultTy);
-  else
-    value = IGF.Builder.CreatePtrToInt(value, resultTy);
-  
   Explosion out;
-  out.add(value);
+
+  for (auto schemaElt : schema) {
+    auto resultTy = schemaElt.getScalarType();
+
+    llvm::Value *value = temp.claimNext();
+    if (value->getType() == resultTy) {
+      // Nothing to do.  This happens with the unowned conversions.
+    } else if (resultTy->isPointerTy()) {
+      value = IGF.Builder.CreateIntToPtr(value, resultTy);
+    } else {
+      value = IGF.Builder.CreatePtrToInt(value, resultTy);
+    }
+    out.add(value);
+  }
+  
   IGF.setLoweredExplosion(result, out);
 }
 

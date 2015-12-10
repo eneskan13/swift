@@ -67,6 +67,7 @@ ReferenceCounting irgen::getReferenceCountingForClass(IRGenModule &IGM,
   if (!IGM.ObjCInterop)
     return ReferenceCounting::Native;
 
+  // NOTE: if you change this, change Type::usesNativeReferenceCounting.
   // If the root class is implemented in swift, then we have a swift
   // refcount; otherwise, we have an ObjC refcount.
   if (hasKnownSwiftImplementation(IGM, getRootClass(theClass)))
@@ -672,7 +673,7 @@ static bool getInstanceSizeByMethod(IRGenFunction &IGF,
 
   // Retain 'self' if necessary.
   if (fnType->getParameters()[0].isConsumed()) {
-    IGF.emitRetainCall(selfValue);
+    IGF.emitNativeStrongRetain(selfValue);
   }
 
   // Adjust down to the defining subclass type if necessary.

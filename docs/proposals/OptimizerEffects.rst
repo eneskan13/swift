@@ -20,7 +20,7 @@ Introduction
 This document formalizes the effects that functions have on program
 state for the purpose of facilitating compiler optimization. By
 modeling more precise function effects, the optimizer can make more
-assumptions leading to more agressive transformation of the program.
+assumptions leading to more aggressive transformation of the program.
 
 Function effects may be deduced by the compiler during program
 analyis. However, in certain situations it is helpful to directly
@@ -245,7 +245,7 @@ state.
 
 ``@get_subobject_non_bridged``
 
-  A method marked ``@get_subobject`` must fullfill all of ``@preserve_unique``'s
+  A method marked ``@get_subobject`` must fulfill all of ``@preserve_unique``'s
   guarantees. Furthermore, it must return a 'subobject' that is stored by the
   set of storage objects or a value stored in the CoW struct itself. It must be
   guaranteed that the 'subobject' returned is kept alive as long the current
@@ -562,7 +562,7 @@ generic arguments::
     func setElt(elt: T) { t = elt }
   }
 
-With no knowledge of T.deinit() we must assume worst case. SIL effects
+With no knowledge of T.deinit() we must assume the worst case. SIL effects
 analysis following specialization can easily handle such a trivial
 example. But there are two situations to be concerned about:
 
@@ -617,7 +617,7 @@ optimizing the surrounding code.
 For example::
 
   func bar<T>(t: T) {...}
-   
+
   func foo<T>(t: T, N: Int) {
     for _ in 1...N {
       bar(t)
@@ -853,7 +853,7 @@ values, and (3) no calls are made into nonpure code.
     type definition, or it may rely on a type constraint.
 
 (3) Naturally, any calls within the function body must be transitively
-    pure. There is no need to check a calls to the storage
+    pure. There is no need to check calls to the storage
     deinitializer, which should already be guaranteed pure by virtue
     of (2).
 
@@ -919,5 +919,5 @@ Generally, a default-safe policy provides a much better user model
 from some effects. For example, we could decide that functions cannot
 affect unspecified state by default. If the user accesses globals,
 they then need to annotate their function. However, default safety
-dictates that any neccessary annotations should be introduced before
+dictates that any necessary annotations should be introduced before
 declaring API stability.

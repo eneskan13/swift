@@ -372,8 +372,9 @@ SILFunction *SILParser::getGlobalNameForDefinition(Identifier Name,
                  Fn->getLoweredFunctionType(), Ty);
       P.diagnose(It->second.second, diag::sil_prior_reference);
       auto loc = SILFileLocation(Loc);
-      Fn = SILFunction::create(SILMod, SILLinkage::Private, "", Ty,
-                               nullptr, loc, IsNotBare, IsNotTransparent, IsNotFragile);
+      Fn =
+          SILMod.getOrCreateFunction(SILLinkage::Private, "", Ty, nullptr, loc,
+                                     IsNotBare, IsNotTransparent, IsNotFragile);
       Fn->setDebugScope(new (SILMod) SILDebugScope(loc, *Fn));
     }
     
@@ -392,17 +393,17 @@ SILFunction *SILParser::getGlobalNameForDefinition(Identifier Name,
   // defined already.
   if (SILMod.lookUpFunction(Name.str()) != nullptr) {
     P.diagnose(Loc, diag::sil_value_redefinition, Name.str());
-    auto fn = SILFunction::create(SILMod, SILLinkage::Private, "", Ty,
-                                  nullptr, loc, IsNotBare, IsNotTransparent,
-                                  IsNotFragile);
+    auto *fn =
+        SILMod.getOrCreateFunction(SILLinkage::Private, "", Ty, nullptr, loc,
+                                   IsNotBare, IsNotTransparent, IsNotFragile);
     fn->setDebugScope(new (SILMod) SILDebugScope(loc, *fn));
     return fn;
   }
 
   // Otherwise, this definition is the first use of this name.
-  auto fn = SILFunction::create(SILMod, SILLinkage::Private, Name.str(),
-                                Ty, nullptr, loc, IsNotBare, IsNotTransparent,
-                                IsNotFragile);
+  auto *fn = SILMod.getOrCreateFunction(SILLinkage::Private, Name.str(), Ty,
+                                        nullptr, loc, IsNotBare,
+                                        IsNotTransparent, IsNotFragile);
   fn->setDebugScope(new (SILMod) SILDebugScope(loc, *fn));
   return fn;
 }
@@ -422,9 +423,9 @@ SILFunction *SILParser::getGlobalNameForReference(Identifier Name,
     if (FnRef->getLoweredFunctionType() != Ty) {
       P.diagnose(Loc, diag::sil_value_use_type_mismatch,
                  Name.str(), FnRef->getLoweredFunctionType(), Ty);
-      FnRef = SILFunction::create(SILMod, SILLinkage::Private, "", Ty, nullptr,
-                                  loc, IsNotBare, IsNotTransparent,
-                                  IsNotFragile);
+      FnRef =
+          SILMod.getOrCreateFunction(SILLinkage::Private, "", Ty, nullptr, loc,
+                                     IsNotBare, IsNotTransparent, IsNotFragile);
       FnRef->setDebugScope(new (SILMod) SILDebugScope(loc, *FnRef));
     }
     return FnRef;
@@ -432,9 +433,9 @@ SILFunction *SILParser::getGlobalNameForReference(Identifier Name,
   
   // If we didn't find a function, create a new one - it must be a forward
   // reference.
-  auto Fn = SILFunction::create(SILMod, SILLinkage::Private,
-                                Name.str(), Ty, nullptr, loc, IsNotBare,
-                                IsNotTransparent, IsNotFragile);
+  auto *Fn = SILMod.getOrCreateFunction(SILLinkage::Private, Name.str(), Ty,
+                                        nullptr, loc, IsNotBare,
+                                        IsNotTransparent, IsNotFragile);
   Fn->setDebugScope(new (SILMod) SILDebugScope(loc, *Fn));
   TUState.ForwardRefFns[Name] = { Fn, Loc };
   TUState.Diags = &P.Diags;
@@ -1193,7 +1194,6 @@ bool SILParser::parseSILOpcode(ValueKind &Opcode, SourceLoc &OpcodeLoc,
     .Case("witness_method", ValueKind::WitnessMethodInst)
     .Case("apply", ValueKind::ApplyInst)
     .Case("assign", ValueKind::AssignInst)
-    .Case("autorelease_return", ValueKind::AutoreleaseReturnInst)
     .Case("autorelease_value", ValueKind::AutoreleaseValueInst)
     .Case("br", ValueKind::BranchInst)
     .Case("builtin", ValueKind::BuiltinInst)
@@ -1237,6 +1237,7 @@ bool SILParser::parseSILOpcode(ValueKind &Opcode, SourceLoc &OpcodeLoc,
     .Case("is_unique_or_pinned", ValueKind::IsUniqueOrPinnedInst)
     .Case("function_ref", ValueKind::FunctionRefInst)
     .Case("load", ValueKind::LoadInst)
+    .Case("load_unowned", ValueKind::LoadUnownedInst)
     .Case("load_weak", ValueKind::LoadWeakInst)
     .Case("mark_dependence", ValueKind::MarkDependenceInst)
     .Case("mark_uninitialized", ValueKind::MarkUninitializedInst)
@@ -1269,7 +1270,6 @@ bool SILParser::parseSILOpcode(ValueKind &Opcode, SourceLoc &OpcodeLoc,
     .Case("strong_pin", ValueKind::StrongPinInst)
     .Case("strong_release", ValueKind::StrongReleaseInst)
     .Case("strong_retain", ValueKind::StrongRetainInst)
-    .Case("strong_retain_autoreleased", ValueKind::StrongRetainAutoreleasedInst)
     .Case("strong_retain_unowned", ValueKind::StrongRetainUnownedInst)
     .Case("strong_unpin", ValueKind::StrongUnpinInst)
     .Case("return", ValueKind::ReturnInst)
@@ -1277,6 +1277,7 @@ bool SILParser::parseSILOpcode(ValueKind &Opcode, SourceLoc &OpcodeLoc,
     .Case("select_enum_addr", ValueKind::SelectEnumAddrInst)
     .Case("select_value", ValueKind::SelectValueInst)
     .Case("store", ValueKind::StoreInst)
+    .Case("store_unowned", ValueKind::StoreUnownedInst)
     .Case("store_weak", ValueKind::StoreWeakInst)
     .Case("string_literal", ValueKind::StringLiteralInst)
     .Case("struct", ValueKind::StructInst)
@@ -1931,9 +1932,7 @@ bool SILParser::parseSILInstruction(SILBasicBlock *BB) {
   UNARY_INSTRUCTION(StrongPin)
   UNARY_INSTRUCTION(StrongRetain)
   UNARY_INSTRUCTION(StrongRelease)
-  UNARY_INSTRUCTION(StrongRetainAutoreleased)
   UNARY_INSTRUCTION(StrongUnpin)
-  UNARY_INSTRUCTION(AutoreleaseReturn)
   UNARY_INSTRUCTION(StrongRetainUnowned)
   UNARY_INSTRUCTION(UnownedRetain)
   UNARY_INSTRUCTION(UnownedRelease)
@@ -1949,13 +1948,29 @@ bool SILParser::parseSILInstruction(SILBasicBlock *BB) {
   UNARY_INSTRUCTION(DebugValueAddr)
 #undef UNARY_INSTRUCTION
 
+  case ValueKind::LoadUnownedInst:
   case ValueKind::LoadWeakInst: {
     bool isTake = false;
+    SourceLoc addrLoc;
     if (parseSILOptional(isTake, *this, "take") ||
-        parseTypedValueRef(Val, B))
+        parseTypedValueRef(Val, addrLoc, B))
       return true;
 
-    ResultVal = B.createLoadWeak(InstLoc, Val, IsTake_t(isTake));
+    if (Opcode == ValueKind::LoadUnownedInst) {
+      if (!Val.getType().is<UnownedStorageType>()) {
+        P.diagnose(addrLoc, diag::sil_operand_not_unowned_address,
+                   "source", OpcodeName);
+      }
+      ResultVal = B.createLoadUnowned(InstLoc, Val, IsTake_t(isTake));
+
+    } else {
+      if (!Val.getType().is<WeakStorageType>()) {
+        P.diagnose(addrLoc, diag::sil_operand_not_weak_address,
+                   "source", OpcodeName);
+      }      
+      ResultVal = B.createLoadWeak(InstLoc, Val, IsTake_t(isTake));
+    }
+
     break;
   }
 
@@ -2248,6 +2263,7 @@ bool SILParser::parseSILInstruction(SILBasicBlock *BB) {
 
   case ValueKind::AssignInst:
   case ValueKind::StoreInst:
+  case ValueKind::StoreUnownedInst:
   case ValueKind::StoreWeakInst: {
     UnresolvedValueName from;
 
@@ -2258,7 +2274,8 @@ bool SILParser::parseSILInstruction(SILBasicBlock *BB) {
     if (parseValueName(from) ||
         parseSILIdentifier(toToken, toLoc,
                            diag::expected_tok_in_sil_instr, "to") ||
-        (Opcode == ValueKind::StoreWeakInst &&
+        ((Opcode == ValueKind::StoreWeakInst ||
+          Opcode == ValueKind::StoreUnownedInst) &&
          parseSILOptional(isInit, *this, "initialization")) ||
         parseTypedValueRef(addrVal, addrLoc, B))
       return true;
@@ -2272,6 +2289,20 @@ bool SILParser::parseSILInstruction(SILBasicBlock *BB) {
       P.diagnose(addrLoc, diag::sil_operand_not_address,
                  "destination", OpcodeName);
       return true;
+    }
+
+    if (Opcode == ValueKind::StoreUnownedInst) {
+      auto refType = addrVal.getType().getAs<UnownedStorageType>();
+      if (!refType) {
+        P.diagnose(addrLoc, diag::sil_operand_not_unowned_address,
+                   "destination", OpcodeName);
+        return true;
+      }
+      auto valueTy = SILType::getPrimitiveObjectType(refType.getReferentType());
+      ResultVal = B.createStoreUnowned(InstLoc,
+                                       getLocalValue(from, valueTy, InstLoc, B),
+                                       addrVal, IsInitialization_t(isInit));
+      break;
     }
 
     if (Opcode == ValueKind::StoreWeakInst) {

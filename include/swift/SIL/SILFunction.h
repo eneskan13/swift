@@ -165,7 +165,6 @@ private:
               const SILDebugScope *debugScope,
               DeclContext *DC);
 
-public:
   static SILFunction *create(SILModule &M, SILLinkage linkage, StringRef name,
                              CanSILFunctionType loweredType,
                              GenericParamList *contextGenericParams,
@@ -180,6 +179,8 @@ public:
                              SILFunction *InsertBefore = nullptr,
                              const SILDebugScope *DebugScope = nullptr,
                              DeclContext *DC = nullptr);
+
+public:
   ~SILFunction();
 
   SILModule &getModule() const { return Module; }
@@ -516,7 +517,6 @@ public:
     return std::find_if(begin(), end(),
       [](const SILBasicBlock &BB) -> bool {
         const TermInst *TI = BB.getTerminator();
-        // TODO: We autorelease_return should also be handled here.
         return isa<ReturnInst>(TI);
     });
   }

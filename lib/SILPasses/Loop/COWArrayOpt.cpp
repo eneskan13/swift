@@ -476,7 +476,6 @@ static bool isNonMutatingArraySemanticCall(SILInstruction *Inst) {
 
   switch (Call.getKind()) {
   case ArrayCallKind::kNone:
-  case ArrayCallKind::kArrayPropsIsNative:
   case ArrayCallKind::kArrayPropsIsNativeTypeChecked:
   case ArrayCallKind::kCheckSubscript:
   case ArrayCallKind::kCheckIndex:
@@ -570,6 +569,10 @@ bool COWArrayOpt::isRetainReleasedBeforeMutate(SILInstruction *RetainInst,
 bool COWArrayOpt::checkSafeArrayAddressUses(UserList &AddressUsers) {
 
   for (auto *UseInst : AddressUsers) {
+
+    if (isDebugInst(UseInst))
+      continue;
+
     if (auto *AI = dyn_cast<ApplyInst>(UseInst)) {
       if (ArraySemanticsCall(AI))
         continue;
@@ -804,7 +807,6 @@ static bool isArrayEltStore(StoreInst *SI) {
 /// Array.append for example can capture another array value.
 static bool mayChangeArrayValueToNonUniqueState(ArraySemanticsCall &Call) {
   switch (Call.getKind()) {
-  case ArrayCallKind::kArrayPropsIsNative:
   case ArrayCallKind::kArrayPropsIsNativeTypeChecked:
   case ArrayCallKind::kCheckSubscript:
   case ArrayCallKind::kCheckIndex:
@@ -1102,7 +1104,8 @@ private:
       return true;
 
     if (Loop->contains(CheckSubscript.getIndex()->getParentBB()) ||
-        Loop->contains(CheckSubscript.getArrayPropertyIsNative()->getParentBB()))
+        Loop->contains(CheckSubscript.getArrayPropertyIsNativeTypeChecked()
+                           ->getParentBB()))
       return false;
 
     auto *CheckSubscriptArrayLoad =
@@ -1742,6 +1745,9 @@ private:
   bool checkSafeArrayAddressUses(UserList &AddressUsers) {
     for (auto *UseInst : AddressUsers) {
 
+      if (isDebugInst(UseInst))
+        continue;
+
       if (isa<DeallocStackInst>(UseInst)) {
         // Handle destruction of a local array.
         continue;
@@ -2166,8 +2172,7 @@ createFastNativeArraysCheck(SmallVectorImpl<ArraySemanticsCall> &ArrayProps,
   for (auto Call : ArrayProps) {
     auto Loc = (*Call).getLoc();
     auto CallKind = Call.getKind();
-    if (CallKind == ArrayCallKind::kArrayPropsIsNative ||
-        CallKind == ArrayCallKind::kArrayPropsIsNativeTypeChecked) {
+    if (CallKind == ArrayCallKind::kArrayPropsIsNativeTypeChecked) {
       auto Val = createStructExtract(B, Loc, SILValue(Call, 0), 0);
       Result = createAnd(B, Loc, Result, Val);
     }
@@ -2201,8 +2206,7 @@ static void collectArrayPropsCalls(
 /// This is true for array.props.isNative and false for
 /// array.props.needsElementTypeCheck.
 static void replaceArrayPropsCall(SILBuilder &B, ArraySemanticsCall C) {
-  assert(C.getKind() == ArrayCallKind::kArrayPropsIsNative ||
-         C.getKind() == ArrayCallKind::kArrayPropsIsNativeTypeChecked);
+  assert(C.getKind() == ArrayCallKind::kArrayPropsIsNativeTypeChecked);
   ApplyInst *AI = C;
 
   SILType IntBoolTy = SILType::getBuiltinIntegerType(1, B.getASTContext());
@@ -2228,7 +2232,7 @@ void ArrayPropertiesSpecializer::specializeLoopNest() {
   auto *CheckBlock = splitBasicBlockAndBranch(B,
       HoistableLoopPreheader->getTerminator(), DomTree, nullptr);
 
-  // Get the exit blocks of the orignal loop.
+  // Get the exit blocks of the original loop.
   auto *Header = CheckBlock->getSingleSuccessor();
   assert(Header);
 

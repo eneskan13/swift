@@ -130,6 +130,7 @@ public:
 
 using Convert = ConvertForWcharSize<sizeof(wchar_t)>;
   
+#if defined(__APPLE__)
 static void convertFromUTF8(llvm::StringRef utf8,
                             llvm::SmallVectorImpl<wchar_t> &out) {
   size_t reserve = out.size() + utf8.size();
@@ -157,8 +158,11 @@ static void convertToUTF8(llvm::ArrayRef<wchar_t> wide,
   (void)res;
   out.set_size(utf8_begin - out.begin());
 }
+#endif
 
 } // end anonymous namespace
+
+#if defined(__APPLE__)
 
 static bool appendToREPLFile(SourceFile &SF,
                              PersistentParserState &PersistentState,
@@ -182,8 +186,6 @@ static bool appendToREPLFile(SourceFile &SF,
   } while (!Done);
   return FoundAnySideEffects;
 }
-
-#if defined(__APPLE__)
 
 /// An arbitrary, otherwise-unused char value that editline interprets as
 /// entering/leaving "literal mode", meaning it passes prompt characters through
@@ -1190,6 +1192,7 @@ void swift::runREPL(CompilerInstance &CI, const ProcessCmdLine &CmdLine,
   // Disable the REPL on other platforms; our current implementation is tied
   // to histedit.h.
   llvm::report_fatal_error("Compiler-internal integrated REPL unimplemented "
-                           "for this platform");
+                           "for this platform; use the LLDB-enhanced REPL "
+                           "instead.");
 }
 #endif

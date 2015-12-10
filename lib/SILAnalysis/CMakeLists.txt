@@ -5,7 +5,6 @@ add_swift_library(swiftSILAnalysis
   ArraySemantic.cpp
   BasicCalleeAnalysis.cpp
   CFG.cpp
-  CallGraph.cpp
   ClassHierarchyAnalysis.cpp
   ColdBlockInfo.cpp
   DestructorAnalysis.cpp
@@ -18,5 +17,6 @@ add_swift_library(swiftSILAnalysis
   RCIdentityAnalysis.cpp
   SideEffectAnalysis.cpp
   SimplifyInstruction.cpp
+  TypeExpansionAnalysis.cpp
   ValueTracking.cpp
   LINK_LIBRARIES swiftSILPassesUtils)

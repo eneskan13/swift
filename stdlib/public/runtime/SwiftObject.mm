@@ -24,6 +24,7 @@
 #endif
 #include "llvm/ADT/StringRef.h"
 #include "swift/Basic/Demangle.h"
+#include "swift/Basic/LLVM.h"
 #include "swift/Basic/Lazy.h"
 #include "swift/Runtime/Heap.h"
 #include "swift/Runtime/HeapObject.h"
@@ -435,79 +436,6 @@ static NSString *_getClassDescription(Class cls) {
 
 @end
 
-/*****************************************************************************/
-/****************************** WEAK REFERENCES ******************************/
-/*****************************************************************************/
-
-/// A side-table of shared weak references for use by the unowned entry.
-///
-/// FIXME: this needs to be integrated with the ObjC runtime so that
-/// entries will actually get collected.  Also, that would make this just
-/// a simple manipulation of the internal structures there.
-///
-/// FIXME: this is not actually safe; if the ObjC runtime deallocates
-/// the pointer, the keys in UnownedRefs will become dangling
-/// references.  rdar://16968733
-namespace {
-  struct UnownedRefEntry {
-    id Value;
-    size_t Count;
-  };
-}
-
-// The ObjC runtime will hold a point into the UnownedRefEntry,
-// so we require pointers to objects to be stable across rehashes.
-// DenseMap doesn't guarantee that, but std::unordered_map does.
-
-namespace {
-struct UnownedTable {
-  std::unordered_map<const void*, UnownedRefEntry> Refs;
-  std::mutex Mutex;
-};
-}
-
-static Lazy<UnownedTable> UnownedRefs;
-
-static void objc_rootRetainUnowned(id object) {
-  auto &Unowned = UnownedRefs.get();
-
-  std::lock_guard<std::mutex> lock(Unowned.Mutex);
-  auto it = Unowned.Refs.find((const void*) object);
-  assert(it != Unowned.Refs.end());
-  assert(it->second.Count > 0);
-
-  // Do an unbalanced retain.
-  id result = objc_loadWeakRetained(&it->second.Value);
-
-  // If that yielded null, abort.
-  if (!result) _swift_abortRetainUnowned((const void*) object);
-}
-
-static void objc_rootWeakRetain(id object) {
-  auto &Unowned = UnownedRefs.get();
-
-  std::lock_guard<std::mutex> lock(Unowned.Mutex);
-  auto ins = Unowned.Refs.insert({ (const void*) object, UnownedRefEntry() });
-  if (!ins.second) {
-    ins.first->second.Count++;
-  } else {
-    objc_initWeak(&ins.first->second.Value, object);
-    ins.first->second.Count = 1;
-  }
-}
-
-static void objc_rootWeakRelease(id object) {
-  auto &Unowned = UnownedRefs.get();
-
-  std::lock_guard<std::mutex> lock(Unowned.Mutex);
-  auto it = Unowned.Refs.find((const void*) object);
-  assert(it != Unowned.Refs.end());
-  assert(it->second.Count > 0);
-  if (--it->second.Count == 0) {
-    objc_destroyWeak(&it->second.Value);
-    Unowned.Refs.erase(it);
-  }
-}
 #endif
 
 /// Decide dynamically whether the given object uses native Swift
@@ -549,21 +477,6 @@ static uintptr_t const objectPointerIsObjCBit = 0x00000002U;
 static bool usesNativeSwiftReferenceCounting_allocated(const void *object) {
   assert(!isObjCTaggedPointerOrNull(object));
   return usesNativeSwiftReferenceCounting(_swift_getClassOfAllocated(object));
-}
-
-static bool usesNativeSwiftReferenceCounting_unowned(const void *object) {
-  auto &Unowned = UnownedRefs.get();
-
-  // If an unknown object is unowned-referenced, it may in fact be implemented
-  // using an ObjC weak reference, which will eagerly deallocate the object
-  // when strongly released. We have to check first whether the object is in
-  // the side table before dereferencing the pointer.
-  if (Unowned.Refs.count(object))
-    return false;
-  // For a natively unowned reference, even after all strong references have
-  // been released, there's enough of a husk left behind to determine its
-  // species.
-  return usesNativeSwiftReferenceCounting_allocated(object);
 }
 
 void swift::swift_unknownRetain_n(void *object, int n) {
@@ -700,25 +613,245 @@ void swift::swift_bridgeObjectRelease_n(void *object, int n) {
 
 
 #if SWIFT_OBJC_INTEROP
-void swift::swift_unknownRetainUnowned(void *object) {
-  if (isObjCTaggedPointerOrNull(object)) return;
-  if (usesNativeSwiftReferenceCounting_unowned(object))
-    return swift_retainUnowned((HeapObject*) object);
-  objc_rootRetainUnowned((id) object);
+
+/*****************************************************************************/
+/**************************** UNOWNED REFERENCES *****************************/
+/*****************************************************************************/
+
+// Swift's native unowned references are implemented purely with
+// reference-counting: as long as an unowned reference is held to an object,
+// it can be destroyed but never deallocated, being that it remains fully safe
+// to pass around a pointer and perform further reference-counting operations.
+//
+// For imported class types (meaning ObjC, for now, but in principle any
+// type which supports ObjC-style weak references but not directly Swift-style
+// unowned references), we have to implement this on top of the weak-reference
+// support, at least for now.  But we'd like to be able to statically take
+// advantage of Swift's representational advantages when we know that all the
+// objects involved are Swift-native.  That means that whatever scheme we use
+// for unowned references needs to interoperate with code just doing naive
+// loads and stores, at least when the ObjC case isn't triggered.
+//
+// We have to be sensitive about making unreasonable assumptions about the
+// implementation of ObjC weak references, and we definitely cannot modify
+// memory owned by the ObjC runtime.  In the long run, direct support from
+// the ObjC runtime can allow an efficient implementation that doesn't violate
+// those requirements, both by allowing us to directly check whether a weak
+// reference was cleared by deallocation vs. just initialized to nil and by
+// guaranteeing a bit pattern that distinguishes Swift references.  In the
+// meantime, out-of-band allocation is inefficient but not ridiculously so.
+//
+// Note that unowned references need not provide guaranteed behavior in
+// the presence of read/write or write/write races on the reference itself.
+// Furthermore, and unlike weak references, they also do not need to be
+// safe against races with the deallocation of the object.  It is the user's
+// responsibility to ensure that the reference remains valid at the time
+// that the unowned reference is read.
+
+namespace {
+  /// An Objective-C unowned reference.  Given an unknown unowned reference
+  /// in memory, it is an ObjC unowned reference if the IsObjCFlag bit
+  /// is set; if so, the pointer stored in the reference actually points
+  /// to out-of-line storage containing an ObjC weak reference.
+  ///
+  /// It is an invariant that this out-of-line storage is only ever
+  /// allocated and constructed for non-null object references, so if the
+  /// weak load yields null, it can only be because the object was deallocated.
+  struct ObjCUnownedReference : UnownedReference {
+    // Pretending that there's a subclass relationship here means that
+    // accesses to objects formally constructed as UnownedReferences will
+    // technically be aliasing violations.  However, the language runtime
+    // will generally not see any such objects.
+
+    enum : uintptr_t { IsObjCMask = 0x1, IsObjCFlag = 0x1 };
+
+    /// The out-of-line storage of an ObjC unowned reference.
+    struct Storage {
+      /// A weak reference registered with the ObjC runtime.
+      mutable id WeakRef;
+
+      Storage(id ref) {
+        assert(ref && "creating storage for null reference?");
+        objc_initWeak(&WeakRef, ref);
+      }
+
+      Storage(const Storage &other) {
+        objc_copyWeak(&WeakRef, &other.WeakRef);
+      }
+
+      Storage &operator=(const Storage &other) = delete;
+
+      Storage &operator=(id ref) {
+        objc_storeWeak(&WeakRef, ref);
+        return *this;
+      }
+
+      ~Storage() {
+        objc_destroyWeak(&WeakRef);
+      }
+
+      // Don't use the C++ allocator.
+      void *operator new(size_t size) { return malloc(size); }
+      void operator delete(void *ptr) { free(ptr); }
+    };
+
+    Storage *storage() {
+      assert(isa<ObjCUnownedReference>(this));
+      return reinterpret_cast<Storage*>(
+               reinterpret_cast<uintptr_t>(Value) & ~IsObjCMask);
+    }
+
+    static void initialize(UnownedReference *dest, id value) {
+      initializeWithStorage(dest, new Storage(value));
+    }
+
+    static void initializeWithCopy(UnownedReference *dest, Storage *src) {
+      initializeWithStorage(dest, new Storage(*src));
+    }
+
+    static void initializeWithStorage(UnownedReference *dest,
+                                      Storage *storage) {
+      dest->Value = (HeapObject*) (uintptr_t(storage) | IsObjCFlag);
+    }
+
+    static bool classof(const UnownedReference *ref) {
+      return (uintptr_t(ref->Value) & IsObjCMask) == IsObjCFlag;
+    }
+  };
 }
 
-void swift::swift_unknownWeakRetain(void *object) {
-  if (isObjCTaggedPointerOrNull(object)) return;
-  if (usesNativeSwiftReferenceCounting_unowned(object))
-    return swift_weakRetain((HeapObject*) object);
-  objc_rootWeakRetain((id) object);
+static bool isObjCForUnownedReference(void *value) {
+  return (isObjCTaggedPointer(value) ||
+          !usesNativeSwiftReferenceCounting_allocated(value));
 }
-void swift::swift_unknownWeakRelease(void *object) {
-  if (isObjCTaggedPointerOrNull(object)) return;
-  if (usesNativeSwiftReferenceCounting_unowned(object))
-    return swift_weakRelease((HeapObject*) object);
-  objc_rootWeakRelease((id) object);
+
+void swift::swift_unknownUnownedInit(UnownedReference *dest, void *value) {
+  if (!value) {
+    dest->Value = nullptr;
+  } else if (isObjCForUnownedReference(value)) {
+    ObjCUnownedReference::initialize(dest, (id) value);
+  } else {
+    swift_unownedInit(dest, (HeapObject*) value);
+  }
 }
+
+void swift::swift_unknownUnownedAssign(UnownedReference *dest, void *value) {
+  if (!value) {
+    swift_unknownUnownedDestroy(dest);
+    dest->Value = nullptr;
+  } else if (isObjCForUnownedReference(value)) {
+    if (auto objcDest = dyn_cast<ObjCUnownedReference>(dest)) {
+      objc_storeWeak(&objcDest->storage()->WeakRef, (id) value);
+    } else {
+      swift_unownedDestroy(dest);
+      ObjCUnownedReference::initialize(dest, (id) value);
+    }
+  } else {
+    if (auto objcDest = dyn_cast<ObjCUnownedReference>(dest)) {
+      delete objcDest->storage();
+      swift_unownedInit(dest, (HeapObject*) value);
+    } else {
+      swift_unownedAssign(dest, (HeapObject*) value);
+    }
+  }
+}
+
+void *swift::swift_unknownUnownedLoadStrong(UnownedReference *ref) {
+  if (!ref->Value) {
+    return nullptr;
+  } else if (auto objcRef = dyn_cast<ObjCUnownedReference>(ref)) {
+    auto result = (void*) objc_loadWeakRetained(&objcRef->storage()->WeakRef);
+    if (result == nullptr) {
+      _swift_abortRetainUnowned(nullptr);
+    }
+    return result;
+  } else {
+    return swift_unownedLoadStrong(ref);
+  }
+}
+
+void *swift::swift_unknownUnownedTakeStrong(UnownedReference *ref) {
+  if (!ref->Value) {
+    return nullptr;
+  } else if (auto objcRef = dyn_cast<ObjCUnownedReference>(ref)) {
+    auto storage = objcRef->storage();
+    auto result = (void*) objc_loadWeakRetained(&objcRef->storage()->WeakRef);
+    if (result == nullptr) {
+      _swift_abortRetainUnowned(nullptr);
+    }
+    delete storage;
+    return result;
+  } else {
+    return swift_unownedTakeStrong(ref);
+  }
+}
+
+void swift::swift_unknownUnownedDestroy(UnownedReference *ref) {
+  if (!ref->Value) {
+    // Nothing to do.
+    return;
+  } else if (auto objcRef = dyn_cast<ObjCUnownedReference>(ref)) {
+    delete objcRef->storage();
+  } else {
+    swift_unownedDestroy(ref);
+  }
+}
+
+void swift::swift_unknownUnownedCopyInit(UnownedReference *dest,
+                                         UnownedReference *src) {
+  assert(dest != src);
+  if (!src->Value) {
+    dest->Value = nullptr;
+  } else if (auto objcSrc = dyn_cast<ObjCUnownedReference>(src)) {
+    ObjCUnownedReference::initializeWithCopy(dest, objcSrc->storage());
+  } else {
+    swift_unownedCopyInit(dest, src);
+  }
+}
+
+void swift::swift_unknownUnownedTakeInit(UnownedReference *dest,
+                                         UnownedReference *src) {
+  assert(dest != src);
+  dest->Value = src->Value;
+}
+
+void swift::swift_unknownUnownedCopyAssign(UnownedReference *dest,
+                                           UnownedReference *src) {
+  if (dest == src) return;
+
+  if (auto objcSrc = dyn_cast<ObjCUnownedReference>(src)) {
+    if (auto objcDest = dyn_cast<ObjCUnownedReference>(dest)) {
+      // ObjC unfortunately doesn't expose a copy-assign operation.
+      objc_destroyWeak(&objcDest->storage()->WeakRef);
+      objc_copyWeak(&objcDest->storage()->WeakRef,
+                    &objcSrc->storage()->WeakRef);
+      return;
+    }
+
+    swift_unownedDestroy(dest);
+    ObjCUnownedReference::initializeWithCopy(dest, objcSrc->storage());
+  } else {
+    if (auto objcDest = dyn_cast<ObjCUnownedReference>(dest)) {
+      delete objcDest->storage();
+      swift_unownedCopyInit(dest, src);
+    } else {
+      swift_unownedCopyAssign(dest, src);
+    }
+  }
+}
+
+void swift::swift_unknownUnownedTakeAssign(UnownedReference *dest,
+                                           UnownedReference *src) {
+  assert(dest != src);
+
+  // There's not really anything more efficient to do here than this.
+  swift_unknownUnownedDestroy(dest);
+  dest->Value = src->Value;
+}
+
+/*****************************************************************************/
+/****************************** WEAK REFERENCES ******************************/
+/*****************************************************************************/
 
 // FIXME: these are not really valid implementations; they assume too
 // much about the implementation of ObjC weak references, and the
@@ -926,6 +1059,7 @@ extern "C" const Metadata *swift_dynamicCastTypeToObjCProtocolUnconditional(
   // Other kinds of type can never conform to ObjC protocols.
   case MetadataKind::Struct:
   case MetadataKind::Enum:
+  case MetadataKind::Optional:
   case MetadataKind::Opaque:
   case MetadataKind::Tuple:
   case MetadataKind::Function:
@@ -973,6 +1107,7 @@ extern "C" const Metadata *swift_dynamicCastTypeToObjCProtocolConditional(
   // Other kinds of type can never conform to ObjC protocols.
   case MetadataKind::Struct:
   case MetadataKind::Enum:
+  case MetadataKind::Optional:
   case MetadataKind::Opaque:
   case MetadataKind::Tuple:
   case MetadataKind::Function:
@@ -1104,7 +1239,8 @@ static Demangle::NodePointer _buildDemanglingForMetadata(const Metadata *type) {
     return _buildDemanglingForNominalType(Node::Kind::BoundGenericClass,
                                           type, classType->getDescription());
   }
-  case MetadataKind::Enum: {
+  case MetadataKind::Enum:
+  case MetadataKind::Optional: {
     auto structType = static_cast<const EnumMetadata *>(type);
     return _buildDemanglingForNominalType(Node::Kind::BoundGenericEnum,
                                           type, structType->Description);

@@ -218,7 +218,6 @@ void AddSSAPasses(SILPassManager &PM, OptimizationLevelKind OpLevel) {
     PM.addEarlyCodeMotion();
   PM.addARCSequenceOpts();
   PM.addRemovePins();
-  PM.addUpdateSideEffects();
 }
 
 
@@ -254,14 +253,12 @@ void swift::runSILOptimizationPasses(SILModule &Module) {
   PM.addDeadFunctionElimination();
   PM.addDeadObjectElimination();
   PM.addGlobalPropertyOpt();
-  PM.addUpdateEscapeAnalysis();
 
   // Do the first stack promotion on high-level SIL.
   PM.addStackPromotion();
 
   PM.runOneIteration();
   PM.resetAndRemoveTransformations();
-
 
   // Run two iterations of the mid-level SSA passes.
   PM.setStageName("MidLevel");
@@ -290,8 +287,6 @@ void swift::runSILOptimizationPasses(SILModule &Module) {
 
   // Specialize closure.
   PM.addClosureSpecializer();
-
-  PM.addUpdateEscapeAnalysis();
 
   // Do the second stack promotion on low-level SIL.
   PM.addStackPromotion();
@@ -337,22 +332,23 @@ void swift::runSILOptimizationPasses(SILModule &Module) {
 
   PM.runOneIteration();
   PM.resetAndRemoveTransformations();
-  PM.addCodeSinking();
 
   PM.setStageName("LateLoopOpt");
-  PM.addLICM();
 
-  // Perform the final lowering transformations.
+  // Delete dead code and drop the bodies of shared functions.
   PM.addExternalFunctionDefinitionsElimination();
   PM.addDeadFunctionElimination();
 
-  // Optimize overflow checks:
+  // Perform the final lowering transformations.
+  PM.addCodeSinking();
+  PM.addLICM();
+
+  // Optimize overflow checks.
   PM.addRedundantOverflowCheckRemoval();
   PM.addMergeCondFails();
 
   // Remove dead code.
   PM.addDCE();
-  // Clean-up after DCE.
   PM.addSimplifyCFG();
   PM.runOneIteration();
 

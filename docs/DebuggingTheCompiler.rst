@@ -37,13 +37,13 @@ Here is how to dump the IR after the main phases of the swift compiler
 #. **Performance SIL passes**. To print the SIL after the complete SIL
    optimization pipeline::
 
-    swiftc -emit-sil -O file-swift
+    swiftc -emit-sil -O file.swift
 
 #. **IRGen**. To print the LLVM IR after IR generation::
 
     swiftc -emit-ir -Xfrontend -disable-llvm-optzns -O file.swift
 
-4. **LLVM passes**. To print the LLVM IR afer LLVM passes::
+4. **LLVM passes**. To print the LLVM IR after LLVM passes::
 
     swiftc -emit-ir -O file.swift
 

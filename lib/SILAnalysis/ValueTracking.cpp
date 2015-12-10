@@ -73,17 +73,18 @@ static bool isTransitiveEscapeInst(SILInstruction *Inst) {
   case ValueKind::FunctionRefInst:
   case ValueKind::IntegerLiteralInst:
   case ValueKind::LoadInst:
+  case ValueKind::LoadUnownedInst:
   case ValueKind::LoadWeakInst:
   case ValueKind::MetatypeInst:
   case ValueKind::ObjCProtocolInst:
   case ValueKind::GlobalAddrInst:
   case ValueKind::StoreInst:
+  case ValueKind::StoreUnownedInst:
   case ValueKind::StoreWeakInst:
   case ValueKind::StringLiteralInst:
   case ValueKind::CopyBlockInst:
   case ValueKind::StrongReleaseInst:
   case ValueKind::StrongPinInst: // Pin handle is independently managed
-  case ValueKind::StrongRetainAutoreleasedInst:
   case ValueKind::StrongRetainInst:
   case ValueKind::StrongRetainUnownedInst:
   case ValueKind::StrongUnpinInst:
@@ -98,7 +99,6 @@ static bool isTransitiveEscapeInst(SILInstruction *Inst) {
   case ValueKind::CondFailInst:
   case ValueKind::DynamicMethodBranchInst:
   case ValueKind::ReturnInst:
-  case ValueKind::AutoreleaseReturnInst:
   case ValueKind::ThrowInst:
   case ValueKind::FixLifetimeInst:
     return false;
@@ -289,7 +289,7 @@ static bool valueMayBeCaptured(SILValue V, CaptureException Exception) {
     // If we have a return instruction and we are assuming that returns don't
     // capture, we are safe.
     if (Exception == CaptureException::ReturnsCannotCapture &&
-        (isa<ReturnInst>(Inst) || isa<AutoreleaseReturnInst>(Inst)))
+        isa<ReturnInst>(Inst))
       continue;
 
     // We could not prove that Inst does not capture V. Be conservative and
@@ -304,7 +304,7 @@ static bool valueMayBeCaptured(SILValue V, CaptureException Exception) {
   return false;
 }
 
-static bool isNoAliasArgument(SILValue V) {
+bool swift::isNotAliasingArgument(SILValue V) {
   auto *Arg = dyn_cast<SILArgument>(V);
   if (!Arg)
     return false;
@@ -323,7 +323,7 @@ bool swift::isNonEscapingLocalObject(SILValue V) {
 
   // If this is a no alias argument then it has not escaped before entering the
   // function. Check if it escapes inside the function.
-  if (isNoAliasArgument(V))
+  if (isNotAliasingArgument(V))
       return !valueMayBeCaptured(V, CaptureException::ReturnsCannotCapture);
 
   // If this is an enum value. If it or its operand does not escape, it is

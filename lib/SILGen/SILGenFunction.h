@@ -762,6 +762,12 @@ public:
   // Type conversions for expr emission and thunks
   //===--------------------------------------------------------------------===//
 
+  ManagedValue emitInjectEnum(SILLocation loc,
+                              ArgumentSource payload,
+                              SILType enumTy,
+                              EnumElementDecl *element,
+                              SGFContext C);
+
   ManagedValue emitInjectOptional(SILLocation loc,
                                   ManagedValue v,
                                   CanType inputFormalType,
@@ -804,7 +810,8 @@ public:
   /// The result is a Builtin.Int1.
   SILValue emitDoesOptionalHaveValue(SILLocation loc, SILValue addrOrValue);
 
-  /// \brief Emit a call to the library intrinsic _preconditionOptionalHasValue.
+  /// \brief Emit a switch_enum to call the library intrinsic
+  /// _diagnoseUnexpectedNilOptional if the optional has no value.
   void emitPreconditionOptionalHasValue(SILLocation loc, SILValue addr);
 
   /// \brief Emit a call to the library intrinsic _getOptionalValue

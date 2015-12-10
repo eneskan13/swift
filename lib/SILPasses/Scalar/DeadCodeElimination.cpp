@@ -43,8 +43,7 @@ static bool seemsUseful(SILInstruction *I) {
   if (I->mayHaveSideEffects())
     return true;
 
-  if (isa<ReturnInst>(I) || isa<AutoreleaseReturnInst>(I) ||
-      isa<UnreachableInst>(I) || isa<ThrowInst>(I))
+  if (isa<ReturnInst>(I) || isa<UnreachableInst>(I) || isa<ThrowInst>(I))
     return true;
 
   return false;
@@ -106,7 +105,7 @@ class DCE : public SILFunctionTransform {
     PDT = DA->get(F);
 
     // If we have a functions that consists of nothing but a
-    // structrually infinite loop like:
+    // structurally infinite loop like:
     //   while true {}
     // we'll have an empty post dominator tree.
     if (!PDT->getRootNode())
@@ -223,7 +222,7 @@ void DCE::markLive(SILFunction &F) {
   for (auto &BB : F) {
     for (auto &I : BB) {
       if (auto *CFI = dyn_cast<CondFailInst>(&I)) {
-        // A cond_fail is only alive if its (identifyable) producer is alive.
+        // A cond_fail is only alive if its (identifiable) producer is alive.
         if (SILInstruction *Prod = getProducer(CFI)) {
           addReverseDependency(Prod, CFI);
         } else {
@@ -378,7 +377,6 @@ void DCE::propagateLiveness(SILInstruction *I) {
     return;
 
   case ValueKind::ReturnInst:
-  case ValueKind::AutoreleaseReturnInst:
   case ValueKind::ThrowInst:
   case ValueKind::CondBranchInst:
   case ValueKind::SwitchEnumInst:
@@ -556,7 +554,7 @@ void DCE::computeLevelNumbers(PostDomTreeNode *Node, unsigned Level) {
 // Structurally infinite loops like:
 //   bb1:
 //     br bb1
-// are not present in the post-dominator tree. Their prescence
+// are not present in the post-dominator tree. Their presence
 // requires significant modifications to the way the rest of the
 // algorithm works. They should be rare, so for now we'll do the most
 // conservative thing and completely bail out, doing no dead code

@@ -25,7 +25,7 @@ function(swift_configure_lit_site_cfg source_path destination_path installed_nam
 endfunction()
 
 function(normalize_boolean_spelling var_name)
-  if("${var_name}")
+  if(${var_name})
     set("${var_name}" TRUE PARENT_SCOPE)
   else()
     set("${var_name}" FALSE PARENT_SCOPE)
@@ -56,7 +56,8 @@ function(get_test_dependencies SDK result_var_name)
      ("${SDK}" STREQUAL "IOS_SIMULATOR") OR
      ("${SDK}" STREQUAL "TVOS_SIMULATOR") OR
      ("${SDK}" STREQUAL "WATCHOS_SIMULATOR") OR
-     ("${SDK}" STREQUAL "LINUX"))
+     ("${SDK}" STREQUAL "LINUX") OR
+     ("${SDK}" STREQUAL "FREEBSD"))
     # No extra dependencies.
   else()
     message(FATAL_ERROR "Unknown SDK: ${SDK}")

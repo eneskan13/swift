@@ -26,7 +26,7 @@ The most important dimensions of variation are:
   errors or not; such a language has **typed propagation**.
 
 * Whether, in a language with typed propagation, the default rule is
-  that that a function can produce an error or that it can't; this
+  that a function can produce an error or that it can't; this
   is the language's **default propagation rule**.
 
 * Whether, in a language with typed propagation, the language enforces
@@ -173,7 +173,7 @@ be quite amazing for us to assert that code shouldn't be written that
 way, understanding nothing else about it.  As long as programmers do
 face these issues, the language has some responsibility to help them.
 
-Therefore, in my judgement, promoting the use of universal errors is
+Therefore, in my judgment, promoting the use of universal errors is
 highly problematic.  They undermine the easy comprehension of code,
 and they undermine the language's ability to help the programmer
 reason about errors.  This design will instead focus on explicitly
@@ -577,7 +577,7 @@ they produce, and so many errors just end up falling into broad
 buckets.  Different libraries end up with their own library-specific
 general error classes, and exceptions list end up just restating the
 library's own dependencies or wrapping the underlying errors in ways
-that loses criticial information.
+that loses critical information.
 
 
 Tradeoffs of typed propagation
@@ -768,7 +768,7 @@ not free:
   which on our platforms means a function call because we're not
   willing to commit to anything more specific in the ABI.
 
-* Jumping across arbitary frames invalidates the callee-save
+* Jumping across arbitrary frames invalidates the callee-save
   registers, so the registering frame must save them all eagerly.  In
   calling conventions with many callee-save registers, this can be
   very expensive.  However, this is only necessary when it's possible
@@ -812,7 +812,7 @@ in a very unsafe way that does not behave well in the presence of
 inlining.
 
 Overall, this approach requires a lot of work in the non-error path
-of functions with interesting frames.  Given that we expects functions
+of functions with interesting frames.  Given that we expect functions
 with interesting frames to be very common in Swift, this is not
 an implementation approach we would consider in the abstract.  However,
 it is the implementation approach for C++/ObjC exceptions on iOS/ARM32,
@@ -955,7 +955,7 @@ This allows the defer action to be written near the code it
 "balances", allowing the reader to immediately see that the required
 clean-up will be done (but this has drawbacks, as discussed above).
 It's very compact, which is nice as most defer actions are short.  It
-also allow multiple actions to pile up without adding awkward nesting.
+also allows multiple actions to pile up without adding awkward nesting.
 However, the function-exit semantics exacerbate the problem of
 searching for intervening clean-up actions, and they introduce
 semantic and performance problems with capturing the values of local
@@ -1396,7 +1396,7 @@ same glance.  The keyword appears before the arrow for the simple
 reason that the arrow is optional (along with the rest of the return
 type) in function and initializer declarations; having the keyword
 appear in slightly different places based on the presence of a return
-type would be silly and would making adding a non-void return type
+type would be silly and would make adding a non-void return type
 feel awkward.  The keyword itself should be descriptive, and it's
 particularly nice for it to be a form of the verb used by the throwing
 expression, conjugated as if performed by the function itself.  Thus,

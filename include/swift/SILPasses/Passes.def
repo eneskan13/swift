@@ -47,8 +47,6 @@ PASS(COWArrayOpts, "cowarray-opt",
      "COW Array optimizations")
 PASS(CSE, "cse",
      "Common subexpression elimination")
-PASS(CallGraphPrinter, "call-graph-printer",
-     "Construct and print the call graph for use in testing")
 PASS(CapturePromotion, "capture-promotion",
      "Promote captures from by-reference to by-value")
 PASS(CapturePropagation, "capture-prop",
@@ -79,6 +77,8 @@ PASS(EarlyInliner, "early-inline",
      "Inline functions that are not marked as having special semantics")
 PASS(EmitDFDiagnostics, "dataflow-diagnostics",
      "Emit SIL Diagnostics")
+PASS(EscapeAnalysisDumper, "escapes-dump",
+     "Dumps the results of escape analysis for all functions")
 PASS(ExternalDefsToDecls, "external-defs-to-decls",
      "Convert external definitions to decls")
 PASS(ExternalFunctionDefinitionsElimination, "external-func-definition-elim",
@@ -89,7 +89,9 @@ PASS(FunctionSignatureOpts, "function-signature-opts",
      "Optimize Function Signatures")
 PASS(ARCSequenceOpts, "arc-sequence-opts",
      "Optimize sequences of retain/release opts by removing redundant inner "
-     "retain/release sequenes")
+     "retain/release sqeuences")
+PASS(ARCLoopOpts, "arc-loop-opts",
+     "Run all arc loop passes")
 PASS(RedundantLoadElimination, "redundant-load-elim",
      "Multiple basic block redundant load elimination")
 PASS(DeadStoreElimination, "dead-store-elim",
@@ -154,6 +156,8 @@ PASS(ReleaseDevirtualizer, "release-devirtualizer",
      "Devirtualize release-instructions")
 PASS(RemovePins, "remove-pins",
      "Remove pin/unpin pairs")
+PASS(SideEffectsDumper, "side-effects-dump",
+     "Dumps the results of side-effect analysis for all functions")
 PASS(SILCleanup, "cleanup",
      "Cleanup SIL in preparation for IRGen")
 PASS(SILCombine, "sil-combine",
@@ -181,10 +185,6 @@ PASS(StripDebugInfo, "strip-debug-info",
      "Strip debug info")
 PASS(SwiftArrayOpts, "array-specialize",
      "Specialize arrays")
-PASS(UpdateEscapeAnalysis, "update-escapes",
-     "Update the escape analysis for all functions")
-PASS(UpdateSideEffects, "side-effects",
-     "Update the side effect analysis for all functions")
 PASS(UsePrespecialized, "use-prespecialized",
      "Use pre-specialized functions")
 PASS_RANGE(AllPasses, AADumper, UsePrespecialized)

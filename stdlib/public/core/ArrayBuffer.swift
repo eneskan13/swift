@@ -88,10 +88,6 @@ extension _ArrayBuffer {
     _storage = _ArrayBridgeStorage(native: source._storage)
   }
 
-  var arrayPropertyIsNative : Bool {
-    return _isNative
-  }
-
   /// `true`, if the array is native and does not need a deferred type check.
   var arrayPropertyIsNativeTypeChecked : Bool {
     return _isNativeTypeChecked
@@ -179,7 +175,7 @@ extension _ArrayBuffer {
         element is Element,
         "Down-casted Array element failed to match the target type")
     }
-    else  {
+    else {
       let ns = _nonNative
       _precondition(
         ns.objectAtIndex(index) is Element,

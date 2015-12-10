@@ -222,7 +222,8 @@ SILFunction *CapturePropagation::specializeConstClosure(PartialApplyInst *PAI,
   // See if we already have a version of this function in the module. If so,
   // just return it.
   if (auto *NewF = OrigF->getModule().lookUpFunction(Name.str())) {
-    DEBUG(llvm::dbgs() << "  Found an already specialized version of the callee: ";
+    DEBUG(llvm::dbgs()
+              << "  Found an already specialized version of the callee: ";
           NewF->printName(llvm::dbgs()); llvm::dbgs() << "\n");
     return NewF;
   }
@@ -233,12 +234,12 @@ SILFunction *CapturePropagation::specializeConstClosure(PartialApplyInst *PAI,
   CanSILFunctionType NewFTy =
     Lowering::adjustFunctionType(PAI->getType().castTo<SILFunctionType>(),
                                  SILFunctionType::Representation::Thin);
-  SILFunction *NewF = SILFunction::create(
-      *getModule(), SILLinkage::Shared, Name, NewFTy,
+  SILFunction *NewF = getModule()->getOrCreateFunction(
+      SILLinkage::Shared, Name, NewFTy,
       /*contextGenericParams*/ nullptr, OrigF->getLocation(), OrigF->isBare(),
       OrigF->isTransparent(), OrigF->isFragile(), OrigF->isThunk(),
-      OrigF->getClassVisibility(),
-      OrigF->getInlineStrategy(), OrigF->getEffectsKind(),
+      OrigF->getClassVisibility(), OrigF->getInlineStrategy(),
+      OrigF->getEffectsKind(),
       /*InsertBefore*/ OrigF, OrigF->getDebugScope(), OrigF->getDeclContext());
   NewF->setDeclCtx(OrigF->getDeclContext());
   DEBUG(llvm::dbgs() << "  Specialize callee as ";

@@ -448,13 +448,11 @@ func testSingleQuoteStringLiterals() {
   'abc" // expected-error{{unterminated string literal}}
   "a'c"
 
-  // FIXME: <rdar://problem/22709931> QoI: Single-quote => double-quote string literal fixit should escape quote chars
-  // FIXME: The suggested replacement should un-escape the single quote
-  // character.
-  'ab\'c' // expected-error{{single-quoted string literal found, use '"'}}{{3-10="ab\\'c"}}
+  'ab\'c' // expected-error{{single-quoted string literal found, use '"'}}{{3-10="ab'c"}}
 
-  // FIXME: The suggested replacement should escape the double-quote character.
-  'ab"c' // expected-error{{single-quoted string literal found, use '"'}}{{3-9="ab"c"}}
+  'ab"c' // expected-error{{single-quoted string literal found, use '"'}}{{3-9="ab\\"c"}}
+  'ab\"c' // expected-error{{single-quoted string literal found, use '"'}}{{3-10="ab\\"c"}}
+  'ab\\"c' // expected-error{{single-quoted string literal found, use '"'}}{{3-11="ab\\\\\\"c"}}
 }
 
 // <rdar://problem/17128913>
@@ -534,7 +532,7 @@ struct Rule {
 }
 
 var ruleVar: Rule
-ruleVar = Rule("a") // expected-error {{cannot convert value of type 'String' to expected argument type '(target: String, dependencies: String)'}}
+ruleVar = Rule("a") // expected-error {{missing argument for parameter 'dependencies' in call}}
 
 
 class C {
@@ -544,7 +542,8 @@ class C {
   func method() {}
 }
 
-var c = C(3) // expected-error {{cannot convert value of type 'Int' to expected argument type 'C?'}}
+_ = C(3) // expected-error {{missing argument label 'other:' in call}}
+_ = C(other: 3) // expected-error {{cannot convert value of type 'Int' to expected argument type 'C?'}}
 
 //===----------------------------------------------------------------------===//
 // Unary Operators
@@ -779,11 +778,11 @@ func r22211854() {
     func f(x: Int, _ y: Int, _ z: String = "") {}
     func g<T>(x: T, _ y: T, _ z: String = "") {}
 
-    f(1) // expected-error{{cannot invoke 'f' with an argument list of type '(Int)'}} expected-note{{expected an argument list of type '(Int, Int, String)'}}
-    g(1) // expected-error{{cannot invoke 'g' with an argument list of type '(Int)'}} expected-note{{expected an argument list of type '(T, T, String)'}}
+    f(1) // expected-error{{missing argument for parameter #2 in call}}
+    g(1) // expected-error{{missing argument for parameter #2 in call}}
     func h() -> Int { return 1 }
-    f(h() == 1) // expected-error{{cannot invoke 'f' with an argument list of type '(Bool)'}} expected-note{{expected an argument list of type '(Int, Int, String)'}}
-    g(h() == 1) // expected-error{{cannot invoke 'g' with an argument list of type '(Bool)'}} expected-note{{expected an argument list of type '(T, T, String)'}}
+    f(h() == 1) // expected-error{{missing argument for parameter #2 in call}}
+    g(h() == 1) // expected-error{{missing argument for parameter #2 in call}}
 }
 
 // <rdar://problem/22348394> Compiler crash on invoking function with labeled defaulted param with non-labeled argument

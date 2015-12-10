@@ -1129,7 +1129,7 @@ std::vector<UIdent> UIDsFromDeclAttributes(const DeclAttributes &Attrs) {
       continue;
     }
 
-    // We handle accessibility explicitely.
+    // We handle accessibility explicitly.
     case DAK_Accessibility:
     case DAK_SetterAccessibility:
       continue;
@@ -2594,6 +2594,13 @@ void SwiftEditorDocument::formatText(unsigned Line, unsigned Length,
   Consumer.recordAffectedLineRange(LineRange.startLine(), LineRange.lineCount());
 }
 
+bool isReturningVoid(SourceManager &SM, CharSourceRange Range) {
+  if (Range.isInvalid())
+    return false;
+  StringRef Text = SM.extractText(Range);
+  return "()" == Text || "Void" == Text;
+}
+
 void SwiftEditorDocument::expandPlaceholder(unsigned Offset, unsigned Length,
                                             EditorConsumer &Consumer) {
   auto SyntaxInfo = Impl.getSyntaxInfo();
@@ -2656,7 +2663,7 @@ void SwiftEditorDocument::expandPlaceholder(unsigned Offset, unsigned Length,
               // For example:
               // foo.bar(a, <#closure#>) turns into foo.bar(a) <#closure#>.
 
-              // If the preceeding token in the call is the leading parameter
+              // If the preceding token in the call is the leading parameter
               // separator, we'll expand replacement to cover that.
               assert(Elems.size() > 1);
               SourceLoc BeforeLoc = Lexer::getLocForEndOfToken(SM,
@@ -2672,8 +2679,7 @@ void SwiftEditorDocument::expandPlaceholder(unsigned Offset, unsigned Length,
 
         OS << "{ ";
 
-        bool ReturningVoid = ClosureReturnTypeRange.isValid() &&
-                             "Void" == SM.extractText(ClosureReturnTypeRange);
+        bool ReturningVoid = isReturningVoid(SM, ClosureReturnTypeRange);
 
         bool HasSignature = !ClosureParams.empty() ||
                             (ClosureReturnTypeRange.isValid() && !ReturningVoid);

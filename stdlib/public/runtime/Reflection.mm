@@ -309,6 +309,7 @@ void swift_MagicMirrorData_summary(const Metadata *T, String *result) {
       new (result) String("(Struct)");
       break;
     case MetadataKind::Enum:
+    case MetadataKind::Optional:
       new (result) String("(Enum Value)");
       break;
     case MetadataKind::Opaque:
@@ -381,6 +382,7 @@ recur:
   case MetadataKind::Class:
   case MetadataKind::Opaque:
   case MetadataKind::Enum:
+  case MetadataKind::Optional:
   case MetadataKind::Function:
   case MetadataKind::Metatype:
     break;
@@ -1149,6 +1151,7 @@ getImplementationForType(const Metadata *T, const OpaqueValue *Value) {
         T, &StructMirrorMetadata, &StructMirrorWitnessTable);
       
   case MetadataKind::Enum:
+  case MetadataKind::Optional:
     return std::make_tuple(
         T, &EnumMirrorMetadata, &EnumMirrorWitnessTable);
 
@@ -1263,4 +1266,18 @@ MirrorReturn swift::swift_reflectAny(OpaqueValue *value, const Metadata *T) {
   if (!take)
     T->vw_destroy(value);
   return MirrorReturn(result);
+}
+
+// NB: This function is not used directly in the Swift codebase, but is
+// exported for Xcode support. Please coordinate before changing.
+extern "C" void swift_stdlib_demangleName(const char *mangledName,
+                                          size_t mangledNameLength,
+                                          String *demangledName) {
+  auto options = Demangle::DemangleOptions();
+  options.DisplayDebuggerGeneratedModule = false;
+  auto result =
+      Demangle::demangleSymbolAsString(mangledName,
+                                       mangledNameLength,
+                                       options);
+  new (demangledName) String(result.data(), result.size());
 }
